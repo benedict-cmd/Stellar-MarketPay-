@@ -9,11 +9,6 @@ const pool = require("../db/pool");
 const { getTimezoneOffset } = require("date-fns-tz");
 const { isBlocked } = require("./profileService");
 
-const { getTimezoneOffset } = require("date-fns-tz");
-const { isBlocked } = require("./profileService");
-
-const { getTimezoneOffset } = require("date-fns-tz");
-
 /**
  * Camel-cased job record returned by this service.
  *
@@ -55,6 +50,7 @@ const { getTimezoneOffset } = require("date-fns-tz");
  * @property {string}   [timezone]            IANA timezone name.
  * @property {string[]} [screeningQuestions]  Up to 5 questions; non-empty entries are kept.
  * @property {string}   clientAddress         Stellar G-address of the posting client.
+ * @property {("public"|"private"|"invite_only")} [visibility="public"]
  */
 
 /**
@@ -158,18 +154,6 @@ function rowToJob(row) {
 }
 
 /**
- * @typedef {Object} CreateJobInput
- * @property {string} title - The title of the job (min 10 characters).
- * @property {string} description - The detailed description of the job (min 30 characters).
- * @property {string|number} budget - The positive budget amount for the job.
- * @property {string} [currency='XLM'] - The currency, either 'XLM' or 'USDC'.
- * @property {string} category - The category of the job (must be a valid category).
- * @property {string[]} [skills] - Array of relevant skills (max 8).
- * @property {Date|string} [deadline] - The deadline for the job.
- * @property {string} clientAddress - The Stellar public key of the client.
- */
-
-/**
  * Create a new job listing.
  * Note: client's profile row must already exist (FK constraint).
  *
@@ -188,7 +172,7 @@ function rowToJob(row) {
  *   clientAddress: 'GBX...',
  * });
  */
-async function createJob({ title, description, budget, currency, category, skills, deadline, timezone, clientAddress, screeningQuestions }) {
+async function createJob({ title, description, budget, currency, category, skills, deadline, timezone, clientAddress, screeningQuestions, visibility = "public" }) {
   validatePublicKey(clientAddress);
 
   if (!title || title.length < 10) {
@@ -230,8 +214,8 @@ async function createJob({ title, description, budget, currency, category, skill
   const { rows } = await pool.query(
     `
     INSERT INTO jobs
-      (title, description, budget, currency, category, skills, status, client_address, deadline, timezone, screening_questions, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8, $9, $10, NOW(), NOW())
+      (title, description, budget, currency, category, visibility, skills, status, client_address, deadline, timezone, screening_questions, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, $9, $10, $11, NOW(), NOW())
     RETURNING *
     `,
     [
@@ -240,6 +224,7 @@ async function createJob({ title, description, budget, currency, category, skill
       parseFloat(budget).toFixed(7),
       currency || 'XLM',
       category,
+      visibility,
       safeSkills,
       clientAddress,
       deadline || null,
@@ -270,7 +255,6 @@ async function getJob(id) {
 
 /**
  * Encode a (createdAt, id) pair into an opaque base64 cursor.
- * Currently unused but kept for future pagination implementation.
  *
  * @param {Object} jobRow  Row containing `created_at` and `id`.
  * @returns {string}        Base64-encoded JSON cursor.
@@ -305,23 +289,12 @@ function decodeCursor(cursor) {
 }
 
 /**
- * @typedef {Object} ListJobsOptions
- * @property {string} [category] - Filter by job category.
- * @property {string} [status='open'] - Filter by job status.
- * @property {number} [limit=50] - Max number of results to return (max 100).
- * @property {string} [search] - Search term for title, description, or skills.
- * @property {string} [cursor] - Pagination cursor.
- * @property {string} [timezone] - Filter by timezone.
- */
-
-/**
  * List jobs with optional filtering, searching, and pagination.
  *
- * @param {ListJobsOptions} [options={}] - Options for listing jobs.
- * @returns {Promise<{jobs: Object[], nextCursor: string|null}>} An object containing the list of jobs and an optional next cursor for pagination.
- * @throws {Error} If the provided cursor is invalid.
+ * @param {Object} [options={}] - Options for listing jobs.
+ * @returns {Promise<{jobs: Object[], nextCursor: string|null}>}
  */
-async function listJobs({ category, status = "open", limit = 50, search, cursor, timezone } = {}) {
+async function listJobs({ category, status = "open", limit = 50, search, cursor, timezone, viewerAddress, includeExpired = false } = {}) {
   const conditions = [];
   const params = [];
 
@@ -463,7 +436,7 @@ async function assignFreelancer(jobId, freelancerAddress) {
     throw e;
   }
 
-  return rows.map(rowToJob);
+  return rowToJob(rows[0]);
 }
 
 /**
@@ -565,7 +538,7 @@ async function incrementShareCount(jobId) {
 }
 
 async function raiseDispute(jobId, { reason, description, raisedBy }) {
-  const { rows } = await query(
+  const { rows } = await pool.query(
     `UPDATE jobs 
      SET status = 'disputed', 
          dispute_reason = $1, 
@@ -586,7 +559,7 @@ async function raiseDispute(jobId, { reason, description, raisedBy }) {
 }
 
 async function resolveDispute(jobId) {
-  const { rows } = await query(
+  const { rows } = await pool.query(
     `UPDATE jobs 
      SET status = 'in_progress', 
          dispute_reason = NULL, 
@@ -657,7 +630,7 @@ async function getAnalyticsOverview() {
   };
 }
 
-export default {
+module.exports = {
   createJob,
   getJob,
   listJobs,
