@@ -32,6 +32,8 @@ const pool            = require("./db/pool");
 const migrate         = require("./db/migrate");
 const IndexerService  = require("./services/indexerService");
 const PriceAlertService = require("./services/priceAlertService");
+const { sanitizeMiddleware } = require("./middleware/sanitize");
+const { processPendingNotifications } = require("./services/notificationService");
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -315,24 +317,28 @@ wsServer.on("connection", async (ws, request) => {
 
 async function bootstrap() {
   try {
-  await migrate();
-  await cleanupExpiredScopeSessions();
-  await indexerService.start();
-  priceAlertService.start();
+    await migrate();
+    await cleanupExpiredScopeSessions();
+    await indexerService.start();
+    priceAlertService.start();
 
-  // Start job expiry checker - run every hour
-  startJobExpiryChecker();
+    // Start job expiry checker - run every hour
+    startJobExpiryChecker();
 
-  // Start notification processor - run every 2 minutes
-  startNotificationProcessor();
+    // Start notification processor - run every 2 minutes
+    startNotificationProcessor();
 
-  server.listen(PORT, () => {
-    console.log(`
+    server.listen(PORT, () => {
+      console.log(`
   🏪 Stellar MarketPay API
   🚀 Running at http://localhost:${PORT}
   🌐 Network: ${process.env.STELLAR_NETWORK || "testnet"}
   `);
-  });
+    });
+  } catch (err) {
+    console.error("[bootstrap] Fatal error:", err.message);
+    process.exit(1);
+  }
 }
 
 /**
